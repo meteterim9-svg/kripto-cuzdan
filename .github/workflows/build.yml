@@ -5,6 +5,9 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -48,3 +51,13 @@ jobs:
         with:
           name: kripto-cuzdan-apk
           path: build/app/outputs/flutter-apk/app-release.apk
+
+      # Telefondan kolay indirmek icin APK'yi Releases sayfasina da koy.
+      - name: Release olustur
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp build/app/outputs/flutter-apk/app-release.apk kripto-cuzdan.apk
+          gh release create "build-${{ github.run_number }}" kripto-cuzdan.apk \
+            --title "Derleme ${{ github.run_number }}" \
+            --notes "Telefonda kurmak icin kripto-cuzdan.apk dosyasina dokun."
