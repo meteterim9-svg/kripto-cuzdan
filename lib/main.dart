@@ -1,22 +1,19 @@
 import 'package:flutter/material.dart';
 
 import 'screens.dart';
+import 'theme.dart';
 
-void main() => runApp(const WalletApp());
+void main() => runApp(const OrvexaApp());
 
-class WalletApp extends StatelessWidget {
-  const WalletApp({super.key});
+class OrvexaApp extends StatelessWidget {
+  const OrvexaApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Kripto Cüzdan',
+      title: 'Orvexa',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        brightness: Brightness.dark,
-        colorSchemeSeed: const Color(0xFF6C4DFF),
-      ),
+      theme: buildTheme(),
       home: const Gate(),
     );
   }

@@ -29,11 +29,19 @@ jobs:
         run: |
           cp -r lib /tmp/lib_bak
           cp pubspec.yaml /tmp/pubspec_bak.yaml
-          flutter create --platforms=android --project-name kripto_cuzdan --org com.kriptocuzdan .
+          flutter create --platforms=android --project-name orvexa --org com.orvexa .
           rm -rf lib
           cp -r /tmp/lib_bak lib
           cp /tmp/pubspec_bak.yaml pubspec.yaml
           rm -rf test
+
+      # Internet izni ve uygulama adi.
+      - name: Manifest ayarlari
+        run: |
+          M=android/app/src/main/AndroidManifest.xml
+          sed -i 's#<application#<uses-permission android:name="android.permission.INTERNET"/>\n    <application#' $M
+          sed -i 's#android:label="[^"]*"#android:label="Orvexa"#' $M
+          grep -n "INTERNET\|label" $M
 
       # flutter_secure_storage en az Android 6 (API 23) ister.
       - name: minSdk 23 yap
@@ -57,7 +65,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp build/app/outputs/flutter-apk/app-release.apk kripto-cuzdan.apk
-          gh release create "build-${{ github.run_number }}" kripto-cuzdan.apk \
+          cp build/app/outputs/flutter-apk/app-release.apk orvexa.apk
+          gh release create "build-${{ github.run_number }}" orvexa.apk \
             --title "Derleme ${{ github.run_number }}" \
-            --notes "Telefonda kurmak icin kripto-cuzdan.apk dosyasina dokun."
+            --notes "Telefonda kurmak icin orvexa.apk dosyasina dokun."

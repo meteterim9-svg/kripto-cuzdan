@@ -4,21 +4,6 @@ import 'dart:math';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
-/// Desteklenen coinler. Adres/bakiye altyapisi sonraki asamalarda eklenecek.
-class Coin {
-  final String name;
-  final String symbol;
-  final bool ready;
-  const Coin(this.name, this.symbol, {this.ready = false});
-}
-
-const supportedCoins = <Coin>[
-  Coin('Bitcoin', 'BTC'),
-  Coin('Ethereum', 'ETH'),
-  Coin('Tron', 'TRX'),
-  Coin('Monero', 'XMR'),
-];
-
 class Wallet {
   final String id;
   final String name;
@@ -45,6 +30,8 @@ class Vault {
   static const _kPinHash = 'pin_hash';
   static const _kPinSalt = 'pin_salt';
   static const _kWallets = 'wallets';
+  static const _kSelected = 'selected_wallet';
+  static const _kCurrency = 'currency';
 
   static String _hash(String salt, String pin) =>
       sha256.convert(utf8.encode('$salt:$pin')).toString();
@@ -81,6 +68,17 @@ class Vault {
       value: jsonEncode(wallets.map((w) => w.toJson()).toList()),
     );
   }
+
+  static Future<String?> getSelected() => _storage.read(key: _kSelected);
+
+  static Future<void> setSelected(String id) =>
+      _storage.write(key: _kSelected, value: id);
+
+  static Future<String> getCurrency() async =>
+      (await _storage.read(key: _kCurrency)) ?? 'usd';
+
+  static Future<void> setCurrency(String c) =>
+      _storage.write(key: _kCurrency, value: c);
 
   static String newId() {
     final rnd = Random.secure();

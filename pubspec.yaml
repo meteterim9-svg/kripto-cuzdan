@@ -1,4 +1,4 @@
-name: kripto_cuzdan
+name: orvexa
 description: Cok coinli, anahtarlari kullanicida kalan (non-custodial) kripto cuzdan.
 publish_to: "none"
 version: 0.1.0+1
@@ -12,6 +12,10 @@ dependencies:
   flutter_secure_storage: ^9.2.2
   bip39: ^1.0.6
   crypto: ^3.0.3
+  bip32: ^2.0.0
+  pointycastle: ^3.9.1
+  http: ^1.2.2
+  qr_flutter: ^4.1.0
 
 dev_dependencies:
   flutter_test:
