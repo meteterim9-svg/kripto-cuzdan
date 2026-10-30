@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import 'assets.dart';
+import 'platform.dart';
 import 'screens.dart';
 import 'state.dart';
 import 'theme.dart';
@@ -617,11 +618,16 @@ class SettingsPage extends StatelessWidget {
           const SizedBox(height: 16),
           const _SectionTitle('Güvenlik'),
           Card(
-            child: ListTile(
-              leading: const Icon(Icons.pin_outlined),
-              title: const Text('PIN değiştir'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => _changePin(context),
+            child: Column(
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.pin_outlined),
+                  title: const Text('PIN değiştir'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => _changePin(context),
+                ),
+                const _SecuritySettings(),
+              ],
             ),
           ),
         ],
@@ -743,6 +749,10 @@ class _ManageWalletScreenState extends State<ManageWalletScreen> {
     );
     if (name == null || name.isEmpty) return;
     final all = await Vault.loadWallets();
+    if (Vault.nameTaken(all, name, exceptId: w.id)) {
+      if (mounted) snack(context, 'Bu isimde bir cüzdan zaten var');
+      return;
+    }
     final idx = all.indexWhere((x) => x.id == w.id);
     if (idx < 0) return;
     all[idx] = all[idx].copyWith(name: name);
@@ -848,6 +858,100 @@ class _ManageWalletScreenState extends State<ManageWalletScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+
+class _SecuritySettings extends StatefulWidget {
+  const _SecuritySettings();
+
+  @override
+  State<_SecuritySettings> createState() => _SecuritySettingsState();
+}
+
+class _SecuritySettingsState extends State<_SecuritySettings> {
+  bool _bio = false;
+  bool _secure = true;
+  int _delay = 30;
+  bool _ready = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final b = await Vault.getBio();
+    final s = await Vault.getSecure();
+    final d = await Vault.getLockDelay();
+    if (mounted) {
+      setState(() {
+        _bio = b;
+        _secure = s;
+        _delay = d;
+        _ready = true;
+      });
+    }
+  }
+
+  Future<void> _toggleBio(bool on) async {
+    if (on) {
+      if (!await Bio.available()) {
+        if (mounted) {
+          snack(context, 'Cihazda kayıtlı parmak izi/yüz yok. Önce telefon ayarlarından ekle.');
+        }
+        return;
+      }
+      if (!await Bio.authenticate('Biyometrik kilidi etkinleştir')) return;
+    }
+    await Vault.setBio(on);
+    if (mounted) setState(() => _bio = on);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_ready) return const SizedBox.shrink();
+    return Column(
+      children: [
+        SwitchListTile(
+          secondary: const Icon(Icons.fingerprint),
+          title: const Text('Parmak izi / yüz ile aç'),
+          value: _bio,
+          onChanged: _toggleBio,
+        ),
+        ListTile(
+          leading: const Icon(Icons.timer_outlined),
+          title: const Text('Otomatik kilit'),
+          trailing: DropdownButton<int>(
+            value: _delay,
+            underline: const SizedBox.shrink(),
+            items: const [
+              DropdownMenuItem(value: 0, child: Text('Hemen')),
+              DropdownMenuItem(value: 30, child: Text('30 saniye')),
+              DropdownMenuItem(value: 60, child: Text('1 dakika')),
+              DropdownMenuItem(value: 300, child: Text('5 dakika')),
+            ],
+            onChanged: (v) async {
+              if (v == null) return;
+              await Vault.setLockDelay(v);
+              setState(() => _delay = v);
+            },
+          ),
+        ),
+        SwitchListTile(
+          secondary: const Icon(Icons.screenshot_outlined),
+          title: const Text('Ekran görüntüsünü engelle'),
+          subtitle: const Text('Ekran kaydı ve son uygulamalar önizlemesi de gizlenir'),
+          value: _secure,
+          onChanged: (v) async {
+            await Vault.setSecure(v);
+            await ScreenSecurity.set(v);
+            setState(() => _secure = v);
+          },
+        ),
+      ],
     );
   }
 }

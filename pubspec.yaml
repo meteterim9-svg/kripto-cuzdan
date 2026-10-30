@@ -16,6 +16,7 @@ dependencies:
   pointycastle: ^3.9.1
   http: ^1.2.2
   qr_flutter: ^4.1.0
+  local_auth: ^2.3.0
 
 dev_dependencies:
   flutter_test:

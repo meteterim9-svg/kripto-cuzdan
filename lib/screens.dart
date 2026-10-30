@@ -1,9 +1,15 @@
+import 'dart:math';
+
 import 'package:bip39/bip39.dart' as bip39;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'home.dart';
+import 'platform.dart';
+import 'theme.dart';
 import 'vault.dart';
+
+final navigatorKey = GlobalKey<NavigatorState>();
 
 void snack(BuildContext context, String text) {
   ScaffoldMessenger.of(context)
@@ -35,6 +41,7 @@ Future<bool> askPin(BuildContext context, {String title = 'PIN gir'}) async {
             child: const Text('Vazgeç'),
           ),
           FilledButton(
+            style: FilledButton.styleFrom(minimumSize: const Size(100, 44)),
             onPressed: () async {
               final good = await Vault.verifyPin(ctrl.text);
               if (good) {
@@ -52,7 +59,8 @@ Future<bool> askPin(BuildContext context, {String title = 'PIN gir'}) async {
   return ok ?? false;
 }
 
-/// Acilista PIN durumuna gore dogru ekrani gosterir.
+/// Acilista PIN durumuna gore dogru ekrani gosterir; arka plandan
+/// donuste (ayarlanan sureden sonra) uygulamayi tekrar kilitler.
 class Gate extends StatefulWidget {
   const Gate({super.key});
 
@@ -60,16 +68,48 @@ class Gate extends StatefulWidget {
   State<Gate> createState() => _GateState();
 }
 
-class _GateState extends State<Gate> {
+class _GateState extends State<Gate> with WidgetsBindingObserver {
   bool? _hasPin;
   bool _unlocked = false;
+  DateTime? _pausedAt;
 
   @override
   void initState() {
     super.initState();
-    Vault.hasPin().then((v) {
-      if (mounted) setState(() => _hasPin = v);
-    });
+    WidgetsBinding.instance.addObserver(this);
+    _boot();
+  }
+
+  Future<void> _boot() async {
+    ScreenSecurity.set(await Vault.getSecure());
+    final v = await Vault.hasPin();
+    if (mounted) setState(() => _hasPin = v);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      _pausedAt = DateTime.now();
+    } else if (state == AppLifecycleState.resumed) {
+      _checkLock();
+    }
+  }
+
+  Future<void> _checkLock() async {
+    final p = _pausedAt;
+    _pausedAt = null;
+    if (p == null || !_unlocked) return;
+    final delay = await Vault.getLockDelay();
+    if (DateTime.now().difference(p).inSeconds >= delay) {
+      navigatorKey.currentState?.popUntil((r) => r.isFirst);
+      if (mounted) setState(() => _unlocked = false);
+    }
   }
 
   @override
@@ -79,6 +119,7 @@ class _GateState extends State<Gate> {
     }
     if (_unlocked) return const HomeScreen();
     return PinScreen(
+      key: ValueKey('pin-${_hasPin!}'),
       setup: !_hasPin!,
       onDone: () => setState(() {
         _hasPin = true;
@@ -103,6 +144,26 @@ class _PinScreenState extends State<PinScreen> {
   String? _error;
   int _fails = 0;
   bool _busy = false;
+  bool _bioReady = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (!widget.setup) _initBio();
+  }
+
+  Future<void> _initBio() async {
+    if (!await Vault.getBio()) return;
+    if (!await Bio.available()) return;
+    if (!mounted) return;
+    setState(() => _bioReady = true);
+    _tryBio();
+  }
+
+  Future<void> _tryBio() async {
+    final ok = await Bio.authenticate('Orvexa kilidini aç');
+    if (ok && mounted) widget.onDone();
+  }
 
   Future<void> _submit() async {
     final pin = _ctrl.text;
@@ -144,7 +205,7 @@ class _PinScreenState extends State<PinScreen> {
           _busy = false;
         });
         if (_fails >= 5) {
-          // Basit bekleme: 5 yanlis denemeden sonra 30 sn kilit.
+          // 5 yanlis denemeden sonra 30 sn bekleme.
           setState(() => _busy = true);
           await Future<void>.delayed(const Duration(seconds: 30));
           if (!mounted) return;
@@ -169,7 +230,7 @@ class _PinScreenState extends State<PinScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.lock_outline, size: 64),
+              const Icon(Icons.lock_outline, size: 64, color: kAccent),
               const SizedBox(height: 16),
               Text(title, style: Theme.of(context).textTheme.headlineSmall),
               const SizedBox(height: 24),
@@ -192,6 +253,15 @@ class _PinScreenState extends State<PinScreen> {
                 onPressed: _busy ? null : _submit,
                 child: Text(widget.setup ? 'Devam' : 'Aç'),
               ),
+              if (_bioReady)
+                Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: TextButton.icon(
+                    onPressed: _tryBio,
+                    icon: const Icon(Icons.fingerprint),
+                    label: const Text('Parmak izi ile aç'),
+                  ),
+                ),
               if (_fails >= 5)
                 const Padding(
                   padding: EdgeInsets.only(top: 12),
@@ -205,7 +275,7 @@ class _PinScreenState extends State<PinScreen> {
   }
 }
 
-/// Yeni cuzdan olusturma veya seed ile geri yukleme.
+/// Yeni cuzdan olusturma (seed dogrulama testi ile) veya seed ile geri yukleme.
 class WalletFormScreen extends StatefulWidget {
   final bool restore;
   const WalletFormScreen({super.key, required this.restore});
@@ -217,31 +287,117 @@ class WalletFormScreen extends StatefulWidget {
 class _WalletFormScreenState extends State<WalletFormScreen> {
   final _name = TextEditingController(text: 'Cüzdan');
   final _seedCtrl = TextEditingController();
-  late final String _generated =
-      widget.restore ? '' : bip39.generateMnemonic();
+  int _wordCount = 12;
+  late String _generated =
+      widget.restore ? '' : bip39.generateMnemonic(strength: 128);
   bool _written = false;
-  String? _error;
+  bool _quiz = false;
+  List<int> _quizIdx = [];
+  final List<TextEditingController> _quizCtrls = [];
+  String? _nameError;
+  String? _seedError;
+  String? _quizError;
 
-  Future<void> _save() async {
-    final name = _name.text.trim().isEmpty ? 'Cüzdan' : _name.text.trim();
-    String mnemonic;
-    if (widget.restore) {
-      mnemonic = _seedCtrl.text.trim().toLowerCase().split(RegExp(r'\s+')).join(' ');
-      if (!bip39.validateMnemonic(mnemonic)) {
-        setState(() => _error = 'Geçersiz seed. Kelimeleri ve sırayı kontrol et.');
-        return;
-      }
-    } else {
-      mnemonic = _generated;
+  @override
+  void initState() {
+    super.initState();
+    _suggestName();
+  }
+
+  Future<void> _suggestName() async {
+    final wallets = await Vault.loadWallets();
+    var i = 1;
+    while (Vault.nameTaken(wallets, 'Cüzdan $i')) {
+      i++;
+    }
+    if (mounted) _name.text = 'Cüzdan $i';
+  }
+
+  void _setWordCount(int n) {
+    setState(() {
+      _wordCount = n;
+      _generated = bip39.generateMnemonic(strength: n == 24 ? 256 : 128);
+      _written = false;
+    });
+  }
+
+  Future<bool> _nameOk() async {
+    final name = _name.text.trim();
+    if (name.isEmpty) {
+      setState(() => _nameError = 'Bir ad gir');
+      return false;
     }
     final wallets = await Vault.loadWallets();
+    if (Vault.nameTaken(wallets, name)) {
+      setState(() => _nameError = 'Bu isimde bir cüzdan zaten var');
+      return false;
+    }
+    setState(() => _nameError = null);
+    return true;
+  }
+
+  Future<void> _save(String mnemonic) async {
+    final wallets = await Vault.loadWallets();
+    final name = _name.text.trim();
+    if (Vault.nameTaken(wallets, name)) {
+      setState(() {
+        _quiz = false;
+        _nameError = 'Bu isimde bir cüzdan zaten var';
+      });
+      return;
+    }
+    if (wallets.any((w) => w.mnemonic == mnemonic)) {
+      setState(() => _seedError = 'Bu cüzdan zaten ekli');
+      return;
+    }
     wallets.add(Wallet(id: Vault.newId(), name: name, mnemonic: mnemonic));
     await Vault.saveWallets(wallets);
     if (mounted) Navigator.pop(context, true);
   }
 
+  Future<void> _restore() async {
+    if (!await _nameOk()) return;
+    final mnemonic =
+        _seedCtrl.text.trim().toLowerCase().split(RegExp(r'\s+')).join(' ');
+    if (!bip39.validateMnemonic(mnemonic)) {
+      setState(() => _seedError = 'Geçersiz seed. Kelimeleri ve sırayı kontrol et.');
+      return;
+    }
+    await _save(mnemonic);
+  }
+
+  Future<void> _startQuiz() async {
+    if (!await _nameOk()) return;
+    final rnd = Random.secure();
+    final idx = <int>{};
+    final total = _generated.split(' ').length;
+    while (idx.length < 3) {
+      idx.add(rnd.nextInt(total));
+    }
+    _quizIdx = idx.toList()..sort();
+    _quizCtrls
+      ..clear()
+      ..addAll(List.generate(3, (_) => TextEditingController()));
+    setState(() {
+      _quiz = true;
+      _quizError = null;
+    });
+  }
+
+  Future<void> _checkQuiz() async {
+    final words = _generated.split(' ');
+    for (var i = 0; i < 3; i++) {
+      if (_quizCtrls[i].text.trim().toLowerCase() != words[_quizIdx[i]]) {
+        setState(() => _quizError = 'Kelimeler uyuşmuyor. Yedeğine tekrar bak.');
+        return;
+      }
+    }
+    await _save(_generated);
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (_quiz) return _buildQuiz(context);
     final words = _generated.isEmpty ? <String>[] : _generated.split(' ');
     return Scaffold(
       appBar: AppBar(
@@ -252,7 +408,10 @@ class _WalletFormScreenState extends State<WalletFormScreen> {
         children: [
           TextField(
             controller: _name,
-            decoration: const InputDecoration(labelText: 'Cüzdan adı'),
+            decoration: InputDecoration(
+              labelText: 'Cüzdan adı',
+              errorText: _nameError,
+            ),
           ),
           const SizedBox(height: 16),
           if (widget.restore) ...[
@@ -264,15 +423,23 @@ class _WalletFormScreenState extends State<WalletFormScreen> {
               enableSuggestions: false,
               decoration: InputDecoration(
                 labelText: '12 veya 24 kelimelik seed',
-                errorText: _error,
-                border: const OutlineInputBorder(),
+                errorText: _seedError,
               ),
             ),
           ] else ...[
+            SegmentedButton<int>(
+              showSelectedIcon: false,
+              segments: const [
+                ButtonSegment(value: 12, label: Text('12 kelime')),
+                ButtonSegment(value: 24, label: Text('24 kelime')),
+              ],
+              selected: {_wordCount},
+              onSelectionChanged: (s) => _setWordCount(s.first),
+            ),
+            const SizedBox(height: 16),
             const Text(
-              'Bu 12 kelime cüzdanının tek yedeğidir. Kâğıda sırayla yaz, '
-              'kimseyle paylaşma, ekran görüntüsü alma. Kaybedersen paraya '
-              'bir daha erişemezsin.',
+              'Bu kelimeler cüzdanının tek yedeğidir. Kâğıda sırayla yaz, '
+              'kimseyle paylaşma. Kaybedersen paraya bir daha erişemezsin.',
             ),
             const SizedBox(height: 12),
             Wrap(
@@ -292,8 +459,54 @@ class _WalletFormScreenState extends State<WalletFormScreen> {
           ],
           const SizedBox(height: 16),
           FilledButton(
-            onPressed: (widget.restore || _written) ? _save : null,
-            child: Text(widget.restore ? 'Geri yükle' : 'Cüzdanı oluştur'),
+            onPressed: widget.restore
+                ? _restore
+                : (_written ? _startQuiz : null),
+            child: Text(widget.restore ? 'Geri yükle' : 'Devam'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuiz(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Yedeği doğrula'),
+        leading: BackButton(onPressed: () => setState(() => _quiz = false)),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          const Text(
+            'Yedeği doğru yazdığından emin olmak için aşağıdaki sıradaki '
+            'kelimeleri gir.',
+          ),
+          const SizedBox(height: 16),
+          for (var i = 0; i < 3; i++)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: TextField(
+                controller: _quizCtrls[i],
+                autocorrect: false,
+                enableSuggestions: false,
+                decoration: InputDecoration(
+                  labelText: '${_quizIdx[i] + 1}. kelime',
+                ),
+              ),
+            ),
+          if (_quizError != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child:
+                  Text(_quizError!, style: const TextStyle(color: kDown)),
+            ),
+          if (_seedError != null)
+            Text(_seedError!, style: const TextStyle(color: kDown)),
+          const SizedBox(height: 8),
+          FilledButton(
+            onPressed: _checkQuiz,
+            child: const Text('Cüzdanı oluştur'),
           ),
         ],
       ),
