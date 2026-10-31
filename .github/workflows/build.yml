@@ -29,11 +29,13 @@ jobs:
         run: |
           cp -r lib /tmp/lib_bak
           cp pubspec.yaml /tmp/pubspec_bak.yaml
+          cp -r test /tmp/test_bak
           flutter create --platforms=android --project-name orvexa --org com.orvexa .
           rm -rf lib
           cp -r /tmp/lib_bak lib
           cp /tmp/pubspec_bak.yaml pubspec.yaml
           rm -rf test
+          cp -r /tmp/test_bak test
 
       # Internet izni ve uygulama adi.
       - name: Manifest ayarlari
@@ -41,6 +43,7 @@ jobs:
           M=android/app/src/main/AndroidManifest.xml
           sed -i 's#<application#<uses-permission android:name="android.permission.INTERNET"/>\n    <application#' $M
           sed -i 's#<application#<uses-permission android:name="android.permission.USE_BIOMETRIC"/>\n    <application#' $M
+          sed -i 's#<application#<uses-permission android:name="android.permission.CAMERA"/>\n    <application#' $M
           sed -i 's#android:label="[^"]*"#android:label="Orvexa"#' $M
           grep -n "INTERNET\|BIOMETRIC\|label" $M
 
@@ -88,9 +91,24 @@ jobs:
             sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 23/; s/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/' "$f"
           done
 
-      - run: flutter pub get
+      - name: Paketleri al
+        shell: bash
+        run: |
+          mkdir -p /tmp/logs
+          flutter pub get 2>&1 | tee /tmp/logs/1-pub.log
 
-      - run: flutter build apk --release
+      - name: Analiz (sadece hatalar)
+        shell: bash
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings 2>&1 | tee /tmp/logs/2-analyze.log
+
+      # Imza/adres testleri: bir tanesi bile tutmazsa APK uretilmez.
+      - name: Testler
+        shell: bash
+        run: flutter test 2>&1 | tee /tmp/logs/3-test.log
+
+      - name: APK derle
+        shell: bash
+        run: flutter build apk --release 2>&1 | tee /tmp/logs/4-build.log
 
       - uses: actions/upload-artifact@v4
         with:
@@ -106,3 +124,23 @@ jobs:
           gh release create "build-${{ github.run_number }}" orvexa.apk \
             --title "Derleme ${{ github.run_number }}" \
             --notes "Telefonda kurmak icin orvexa.apk dosyasina dokun."
+
+      # Basarisiz olursa hata kaydini Releases'a (on surum) yaz, boylece okunabilir.
+      - name: Hata kaydi
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "Calisma ${{ github.run_number }} basarisiz."
+            echo
+            for f in /tmp/logs/*.log; do
+              [ -f "$f" ] || continue
+              echo "=== $(basename $f) ==="
+              tail -c 20000 "$f" | sed 's/\x1b\[[0-9;]*m//g'
+              echo
+            done
+          } > /tmp/fail.md
+          gh release create "fail-${{ github.run_number }}" --prerelease \
+            --title "HATA ${{ github.run_number }}" --notes-file /tmp/fail.md

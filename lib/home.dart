@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import 'assets.dart';
+import 'history.dart';
+import 'send_ui.dart';
 import 'platform.dart';
 import 'screens.dart';
 import 'state.dart';
@@ -161,9 +163,23 @@ class PortfolioPage extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 _RoundAction(
+                  icon: Icons.north_east,
+                  label: 'Gönder',
+                  onTap: () => _chooseAsset(
+                    context,
+                    'Hangi varlığı göndermek istiyorsun?',
+                    (a) => SendScreen(asset: a),
+                  ),
+                ),
+                const SizedBox(width: 32),
+                _RoundAction(
                   icon: Icons.south_west,
                   label: 'Al',
-                  onTap: () => _chooseAssetToReceive(context),
+                  onTap: () => _chooseAsset(
+                    context,
+                    'Hangi varlığı almak istiyorsun?',
+                    (a) => ReceiveScreen(asset: a),
+                  ),
                 ),
                 const SizedBox(width: 32),
                 _RoundAction(
@@ -225,7 +241,11 @@ class PortfolioPage extends StatelessWidget {
     );
   }
 
-  void _chooseAssetToReceive(BuildContext context) {
+  void _chooseAsset(
+    BuildContext context,
+    String title,
+    Widget Function(Asset) page,
+  ) {
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -233,10 +253,11 @@ class PortfolioPage extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: Text('Hangi varlığı almak istiyorsun?',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(title,
+                  style: const TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.w600)),
             ),
             for (final a in allAssets)
               ListTile(
@@ -247,7 +268,7 @@ class PortfolioPage extends StatelessWidget {
                   Navigator.pop(ctx);
                   Navigator.push(
                     context,
-                    MaterialPageRoute(builder: (_) => ReceiveScreen(asset: a)),
+                    MaterialPageRoute(builder: (_) => page(a)),
                   );
                 },
               ),
@@ -458,14 +479,37 @@ class AssetScreen extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 24),
-                FilledButton.icon(
-                  icon: const Icon(Icons.south_west),
-                  label: const Text('Al'),
-                  onPressed: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (_) => ReceiveScreen(asset: asset)),
-                  ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton.icon(
+                        icon: const Icon(Icons.north_east),
+                        label: const Text('Gönder'),
+                        onPressed: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (_) => SendScreen(asset: asset)),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: FilledButton.icon(
+                        icon: const Icon(Icons.south_west),
+                        label: const Text('Al'),
+                        onPressed: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (_) => ReceiveScreen(asset: asset)),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 24),
+                HistoryList(
+                  key: ValueKey('${app.selectedId}-${asset.id}'),
+                  asset: asset,
                 ),
               ],
             ),
