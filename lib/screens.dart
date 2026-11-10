@@ -17,6 +17,14 @@ void snack(BuildContext context, String text) {
     ..showSnackBar(SnackBar(content: Text(text)));
 }
 
+/// Yanlis PIN sonrasi gosterilecek mesaj (kilit varsa kalan sure ile).
+Future<String> pinFailMessage() async {
+  final wait = await Vault.lockRemaining();
+  if (wait <= 0) return 'Yanlış PIN';
+  if (wait < 60) return 'Çok fazla deneme. $wait sn bekle.';
+  return 'Çok fazla deneme. ${(wait / 60).ceil()} dk bekle.';
+}
+
 /// PIN sorar, dogruysa true doner.
 Future<bool> askPin(BuildContext context, {String title = 'PIN gir'}) async {
   final ctrl = TextEditingController();
@@ -47,7 +55,9 @@ Future<bool> askPin(BuildContext context, {String title = 'PIN gir'}) async {
               if (good) {
                 if (ctx.mounted) Navigator.pop(ctx, true);
               } else {
-                setState(() => error = 'Yanlış PIN');
+                final msg = await pinFailMessage();
+                ctrl.clear();
+                setState(() => error = msg);
               }
             },
             child: const Text('Onayla'),
@@ -142,14 +152,23 @@ class _PinScreenState extends State<PinScreen> {
   final _ctrl = TextEditingController();
   String? _first;
   String? _error;
-  int _fails = 0;
   bool _busy = false;
   bool _bioReady = false;
 
   @override
   void initState() {
     super.initState();
-    if (!widget.setup) _initBio();
+    if (!widget.setup) {
+      _initBio();
+      _showLockIfAny();
+    }
+  }
+
+  /// Uygulama kilitliyken yeniden acildiysa kalan sureyi goster.
+  Future<void> _showLockIfAny() async {
+    if (await Vault.lockRemaining() <= 0) return;
+    final msg = await pinFailMessage();
+    if (mounted) setState(() => _error = msg);
   }
 
   Future<void> _initBio() async {
@@ -198,22 +217,13 @@ class _PinScreenState extends State<PinScreen> {
       if (ok) {
         widget.onDone();
       } else {
-        _fails++;
+        final msg = await pinFailMessage();
+        if (!mounted) return;
         setState(() {
           _ctrl.clear();
-          _error = 'Yanlış PIN ($_fails)';
+          _error = msg;
           _busy = false;
         });
-        if (_fails >= 5) {
-          // 5 yanlis denemeden sonra 30 sn bekleme.
-          setState(() => _busy = true);
-          await Future<void>.delayed(const Duration(seconds: 30));
-          if (!mounted) return;
-          setState(() {
-            _fails = 0;
-            _busy = false;
-          });
-        }
       }
     }
   }
@@ -261,11 +271,6 @@ class _PinScreenState extends State<PinScreen> {
                     icon: const Icon(Icons.fingerprint),
                     label: const Text('Parmak izi ile aç'),
                   ),
-                ),
-              if (_fails >= 5)
-                const Padding(
-                  padding: EdgeInsets.only(top: 12),
-                  child: Text('Çok fazla deneme, 30 saniye bekle.'),
                 ),
             ],
           ),

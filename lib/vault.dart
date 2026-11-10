@@ -38,6 +38,8 @@ class Vault {
   static const _kLockDelay = 'lock_delay';
   static const _kBio = 'biometric';
   static const _kSecure = 'secure_screen';
+  static const _kFails = 'pin_fails';
+  static const _kLockUntil = 'pin_lock_until';
 
   // Eski surum (v1): tek SHA-256. Sadece gecis icin tutuluyor.
   static String _hashV1(String salt, String pin) =>
@@ -54,6 +56,16 @@ class Vault {
     return base64Url.encode(kd.process(Uint8List.fromList(utf8.encode(pin))));
   }
 
+  /// Zamanlama saldirisina karsi sabit zamanli karsilastirma.
+  static bool _eq(String a, String b) {
+    if (a.length != b.length) return false;
+    var r = 0;
+    for (var i = 0; i < a.length; i++) {
+      r |= a.codeUnitAt(i) ^ b.codeUnitAt(i);
+    }
+    return r == 0;
+  }
+
   static Future<bool> hasPin() async =>
       (await _storage.read(key: _kPinHash)) != null;
 
@@ -66,14 +78,50 @@ class Vault {
     await _storage.write(key: _kPinV, value: '2');
   }
 
+  /// Kilit suresi bittiyse 0, bitmediyse kalan saniye.
+  /// Uygulama kapatilip acilsa da sifirlanmaz.
+  static Future<int> lockRemaining() async {
+    final until =
+        int.tryParse(await _storage.read(key: _kLockUntil) ?? '') ?? 0;
+    final ms = until - DateTime.now().millisecondsSinceEpoch;
+    return ms > 0 ? (ms / 1000).ceil() : 0;
+  }
+
+  static Future<void> _registerFail() async {
+    final fails =
+        (int.tryParse(await _storage.read(key: _kFails) ?? '') ?? 0) + 1;
+    await _storage.write(key: _kFails, value: '$fails');
+    if (fails >= 5) {
+      // 5. hatada 30 sn, sonra her hatada iki kati; en fazla 1 saat.
+      final sec = min(3600, 30 * pow(2, fails - 5).toInt());
+      final until = DateTime.now().millisecondsSinceEpoch + sec * 1000;
+      await _storage.write(key: _kLockUntil, value: '$until');
+    }
+  }
+
+  static Future<void> _resetFails() async {
+    await _storage.delete(key: _kFails);
+    await _storage.delete(key: _kLockUntil);
+  }
+
   static Future<bool> verifyPin(String pin) async {
+    if (await lockRemaining() > 0) return false;
     final salt = await _storage.read(key: _kPinSalt);
     final stored = await _storage.read(key: _kPinHash);
     if (salt == null || stored == null) return false;
     final v = await _storage.read(key: _kPinV);
-    if (v == '2') return _hashV2(salt, pin) == stored;
-    final ok = _hashV1(salt, pin) == stored;
-    if (ok) await setPin(pin); // eski kaydi guclu yonteme tasi
+    bool ok;
+    if (v == '2') {
+      ok = _eq(_hashV2(salt, pin), stored);
+    } else {
+      ok = _eq(_hashV1(salt, pin), stored);
+      if (ok) await setPin(pin); // eski kaydi guclu yonteme tasi
+    }
+    if (ok) {
+      await _resetFails();
+    } else {
+      await _registerFail();
+    }
     return ok;
   }
 
